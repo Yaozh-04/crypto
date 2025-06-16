@@ -3,12 +3,15 @@ import tkinter as tk
 from tkinter import ttk, scrolledtext, messagebox
 import json
 import logging
+import threading
+import queue
 
 from Crypto.Random import get_random_bytes
 
 from crypto_tool.crypto.aes import AESCipher, EncryptionError, DecryptionError
 from crypto_tool.crypto.rsa import RSAEncryptor, EncryptionError as RSAEncryptionError, DecryptionError as RSADecryptionError
 from crypto_tool.crypto.hybrid import HybridEncryptor, EncryptionError as HybridEncryptionError, DecryptionError as HybridDecryptionError
+from crypto_tool.crypto.hash import sha256_hash, HashingError
 from crypto_tool.utils.visualizer import Visualizer
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -22,9 +25,20 @@ class EncryptionToolApp:
         self.root.geometry("1000x700")
         self.root.minsize(900, 600)
 
+        # 绑定窗口关闭事件
+        self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
+
         # 创建加密器实例
         self.rsa_key_size = 2048
         self.reset_encryptors()
+
+        # 暴力破解相关状态
+        self.brute_force_thread = None
+        self.brute_force_running = False
+        self.brute_force_paused = False
+        self.brute_force_queue = queue.Queue() # For communication from thread to GUI
+        self.pause_event = threading.Event() # For pausing/resuming the thread
+        self.pause_event.set() # Initially, allow the thread to run
 
         # 创建主框架
         self.main_frame = ttk.Frame(root, padding="10")
@@ -47,6 +61,7 @@ class EncryptionToolApp:
         self.create_aes_tab()
         self.create_rsa_tab()
         self.create_hybrid_tab()
+        self.create_hash_tab()
 
         # 默认显示AES标签页
         self.show_tab("aes")
@@ -70,6 +85,9 @@ class EncryptionToolApp:
 
         self.hybrid_btn = ttk.Button(navbar, text="混合加密", command=lambda: self.show_tab("hybrid"))
         self.hybrid_btn.pack(side=tk.LEFT, padx=5, pady=5)
+
+        self.hash_btn = ttk.Button(navbar, text="哈希", command=lambda: self.show_tab("hash"))
+        self.hash_btn.pack(side=tk.LEFT, padx=5, pady=5)
 
         # 分隔线
         ttk.Separator(self.main_frame, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=5)
@@ -481,12 +499,229 @@ class EncryptionToolApp:
         self.hybrid_iv.config(state=tk.DISABLED)
         self.status_var.set("就绪")
 
+    def create_hash_tab(self):
+        """创建哈希标签页"""
+        self.hash_frame = ttk.LabelFrame(self.content_frame, text="SHA-256 哈希", padding="10")
+
+        # 配置 hash_frame 的 grid 布局，用于管理顶部内容区和底部暴力破解区
+        self.hash_frame.grid_rowconfigure(0, weight=1) # 顶部内容行垂直扩展
+        self.hash_frame.grid_rowconfigure(1, weight=0) # 底部暴力破解行不额外垂直扩展
+        self.hash_frame.grid_columnconfigure(0, weight=1) # 确保唯一一列水平扩展
+
+        # 新增一个框架来容纳左右输入/输出区域
+        hash_top_content_frame = ttk.Frame(self.hash_frame)
+        hash_top_content_frame.grid(row=0, column=0, sticky=tk.NSEW) # 填充所有方向
+
+        # 左侧：输入区域
+        left_frame = ttk.Frame(hash_top_content_frame)
+        left_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=5, pady=5)
+
+        # 输入文本
+        ttk.Label(left_frame, text="输入文本:").pack(anchor=tk.W)
+        self.hash_input_text = scrolledtext.ScrolledText(left_frame, width=40, height=15)
+        self.hash_input_text.pack(fill=tk.BOTH, expand=True, pady=5)
+
+        # 操作按钮
+        btn_frame = ttk.Frame(left_frame)
+        btn_frame.pack(fill=tk.X, pady=10)
+
+        ttk.Button(btn_frame, text="计算哈希", command=self.hash_data).pack(side=tk.LEFT, padx=5)
+        ttk.Button(btn_frame, text="清空", command=self.clear_hash_fields).pack(side=tk.LEFT, padx=5)
+
+        # 右侧：结果输出区域
+        right_frame = ttk.Frame(hash_top_content_frame)
+        right_frame.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True, padx=5, pady=5)
+
+        ttk.Label(right_frame, text="哈希结果:").pack(anchor=tk.W)
+        self.hash_output_text = scrolledtext.ScrolledText(right_frame, width=40, height=15)
+        self.hash_output_text.pack(fill=tk.BOTH, expand=True, pady=5)
+
+        # 暴力破解区域 (现在直接grid到self.hash_frame)
+        brute_force_frame = ttk.LabelFrame(self.hash_frame, text="SHA-256 暴力破解 (仅限短字符串)", padding="10")
+        brute_force_frame.grid(row=1, column=0, sticky=tk.EW, pady=5) # 水平填充
+
+        # 使用 grid 布局来更精确地控制内部组件
+        brute_force_frame.grid_columnconfigure(0, weight=1) # 确保第一列（内容列）可以扩展
+
+        # 目标哈希值
+        ttk.Label(brute_force_frame, text="目标哈希值:").grid(row=0, column=0, sticky=tk.W, padx=5, pady=5)
+        self.hash_target_hash_entry = ttk.Entry(brute_force_frame, width=60)
+        self.hash_target_hash_entry.grid(row=1, column=0, sticky=tk.EW, padx=5, pady=5)
+
+        # 暴力破解按钮框架
+        brute_force_btn_frame = ttk.Frame(brute_force_frame)
+        brute_force_btn_frame.grid(row=2, column=0, sticky=tk.W, padx=5, pady=5)
+
+        ttk.Button(brute_force_btn_frame, text="暴力破解", command=self.brute_force_hash).pack(side=tk.LEFT, padx=5)
+        self.pause_brute_force_btn = ttk.Button(brute_force_btn_frame, text="暂停", command=self.toggle_brute_force_pause, state=tk.DISABLED)
+        self.pause_brute_force_btn.pack(side=tk.LEFT, padx=5)
+
+        # 警告信息放置在单独的行，确保完整显示
+        ttk.Label(brute_force_frame, text="警告: 暴力破解仅对极短（如5字符以内）的字符串有效，耗时可能很长。", foreground="red", wraplength=1000).grid(row=3, column=0, sticky=tk.EW, padx=5, pady=5)
+
+    def hash_data(self):
+        """计算输入文本的 SHA-256 哈希值"""
+        input_text = self.hash_input_text.get("1.0", tk.END).strip()
+        if not input_text:
+            messagebox.showwarning("警告", "请输入要计算哈希的文本")
+            return
+
+        try:
+            hashed_result = sha256_hash(input_text)
+            self.hash_output_text.delete("1.0", tk.END)
+            self.hash_output_text.insert(tk.END, hashed_result)
+            self.status_var.set("SHA-256 哈希计算完成")
+        except HashingError as e:
+            messagebox.showerror("错误", str(e))
+            self.status_var.set(f"哈希计算失败: {str(e)}")
+        except Exception as e:
+            messagebox.showerror("错误", f"发生未知错误: {str(e)}")
+            self.status_var.set(f"发生未知错误: {str(e)}")
+
+    def brute_force_hash(self):
+        """启动一个新线程来尝试暴力破解 SHA-256 哈希值"""
+        if self.brute_force_running:
+            messagebox.showwarning("警告", "暴力破解已在进行中。")
+            return
+
+        target_hash = self.hash_target_hash_entry.get().strip()
+        if not target_hash:
+            messagebox.showwarning("警告", "请输入目标哈希值进行破解")
+            return
+        if len(target_hash) != 64: # SHA-256 hash is 64 hex characters
+            messagebox.showwarning("警告", "请输入有效的 SHA-256 哈希值 (64个十六进制字符)。")
+            return
+
+        self.brute_force_running = True
+        self.brute_force_paused = False # 确保初始状态未暂停
+        self.pause_event.set() # 确保事件设置为允许运行
+        self.pause_brute_force_btn.config(text="暂停", state=tk.NORMAL)
+
+        self.hash_output_text.delete("1.0", tk.END)
+        self.hash_output_text.insert(tk.END, "正在尝试暴力破解...这可能需要一些时间。\n")
+        self.status_var.set("开始暴力破解...")
+        self.root.update_idletasks() # 强制更新UI
+
+        # 在新线程中运行暴力破解逻辑
+        self.brute_force_thread = threading.Thread(target=self._run_brute_force_in_thread, args=(target_hash,))
+        self.brute_force_thread.daemon = True # 允许程序在线程运行中退出
+        self.brute_force_thread.start()
+
+        # 定期检查线程发送过来的消息
+        self.root.after(100, self.check_brute_force_queue)
+
+    def _run_brute_force_in_thread(self, target_hash):
+        """在新线程中执行暴力破解逻辑"""
+        CHARSET = "abcdefghijklmnopqrstuvwxyz0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+        MAX_LENGTH = 5 # 最大破解长度
+
+        try:
+            import itertools
+            found = False
+            for length in range(1, MAX_LENGTH + 1):
+                for combination in itertools.product(CHARSET, repeat=length):
+                    # 检查暂停信号
+                    self.pause_event.wait() # 如果事件未设置（暂停），则线程将在此阻塞
+
+                    if not self.brute_force_running: # 检查是否收到停止信号
+                        break
+
+                    attempt = "".join(combination)
+                    hashed_attempt = sha256_hash(attempt)
+                    if hashed_attempt == target_hash:
+                        self.brute_force_queue.put({"status": "found", "result": attempt})
+                        found = True
+                        break
+                if found or not self.brute_force_running:
+                    break
+            
+            if not found and self.brute_force_running:
+                self.brute_force_queue.put({"status": "not_found"})
+        except Exception as e:
+            self.brute_force_queue.put({"status": "error", "message": str(e)})
+        finally:
+            self.brute_force_queue.put({"status": "finished"}) # 发送线程完成信号
+
+    def check_brute_force_queue(self):
+        """定期从队列中检查并处理来自暴力破解线程的消息"""
+        while not self.brute_force_queue.empty():
+            data = self.brute_force_queue.get()
+            if data["status"] == "found":
+                self.hash_output_text.insert(tk.END, f"匹配成功! 原始字符串: {data['result']}\n")
+                self.status_var.set("暴力破解完成: 匹配成功")
+                self._reset_brute_force_state()
+            elif data["status"] == "not_found":
+                self.hash_output_text.insert(tk.END, "未找到匹配的原始字符串 (或超出最大破解长度限制)。\n")
+                self.status_var.set("暴力破解完成: 未找到匹配")
+                self._reset_brute_force_state()
+            elif data["status"] == "error":
+                messagebox.showerror("错误", f"暴力破解过程中发生错误: {data['message']}")
+                self.status_var.set(f"暴力破解失败: {data['message']}")
+                self._reset_brute_force_state()
+            elif data["status"] == "finished":
+                # 线程完成，但可能在找到结果或出错前就结束了 (例如被停止)
+                if self.brute_force_running: # 如果仍然标记为running，说明是正常完成未找到
+                    self.status_var.set("暴力破解完成")
+                self._reset_brute_force_state() 
+        
+        # 如果暴力破解仍在进行，则继续安排下一次检查
+        if self.brute_force_running:
+            self.root.after(100, self.check_brute_force_queue)
+
+    def toggle_brute_force_pause(self):
+        """切换暴力破解的暂停/继续状态"""
+        if self.brute_force_running:
+            if self.brute_force_paused:
+                # 继续
+                self.brute_force_paused = False
+                self.pause_event.set() # 发出信号让线程继续运行
+                self.pause_brute_force_btn.config(text="暂停")
+                self.status_var.set("暴力破解已恢复")
+            else:
+                # 暂停
+                self.brute_force_paused = True
+                self.pause_event.clear() # 发出信号让线程暂停
+                self.pause_brute_force_btn.config(text="继续")
+                self.status_var.set("暴力破解已暂停")
+        else:
+            messagebox.showwarning("警告", "没有正在运行的暴力破解任务。")
+
+    def _reset_brute_force_state(self):
+        """重置暴力破解相关的状态和UI元素"""
+        self.brute_force_running = False
+        self.brute_force_paused = False
+        self.pause_brute_force_btn.config(text="暂停", state=tk.DISABLED)
+        self.brute_force_thread = None # 清除线程引用
+        self.pause_event.set() # 确保事件设置为允许运行，为下次启动做准备
+
+    def clear_hash_fields(self):
+        """清空哈希标签页的输入和输出"""
+        # 如果暴力破解正在进行，则停止它
+        if self.brute_force_running:
+            self.brute_force_running = False # 信号线程停止
+            self.pause_event.set() # 确保线程不会因为暂停而卡住
+        self._reset_brute_force_state()
+        
+        self.hash_input_text.delete("1.0", tk.END)
+        self.hash_output_text.delete("1.0", tk.END)
+        self.hash_target_hash_entry.delete(0, tk.END)
+        self.status_var.set("就绪")
+
+    def on_closing(self):
+        """处理窗口关闭事件，确保线程安全退出"""
+        if self.brute_force_running:
+            self.brute_force_running = False # 信号线程停止
+            self.pause_event.set() # 解除线程阻塞，如果它处于暂停状态
+            # 由于brute_force_thread被设置为daemon=True，程序退出时线程会自动终止
+        self.root.destroy()
+
     def show_tab(self, tab_name):
         """显示指定的标签页"""
         # 隐藏所有标签页
         self.aes_frame.pack_forget()
         self.rsa_frame.pack_forget()
         self.hybrid_frame.pack_forget()
+        self.hash_frame.pack_forget()
         
         # 显示选中的标签页
         if tab_name == "aes":
@@ -498,3 +733,6 @@ class EncryptionToolApp:
         elif tab_name == "hybrid":
             self.hybrid_frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
             self.status_var.set("混合加密")
+        elif tab_name == "hash":
+            self.hash_frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+            self.status_var.set("SHA-256 哈希")
