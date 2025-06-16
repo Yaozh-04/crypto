@@ -62,9 +62,13 @@ class EncryptionToolApp:
         self.create_rsa_tab()
         self.create_hybrid_tab()
         self.create_hash_tab()
+        # self.create_flowchart_tab()
 
         # 默认显示AES标签页
         self.show_tab("aes")
+
+        # 显示欢迎弹窗
+        self.show_welcome_popup()
 
     def reset_encryptors(self):
         """重置所有加密器实例"""
@@ -74,13 +78,12 @@ class EncryptionToolApp:
     def create_navbar(self):
         """创建顶部导航栏"""
         navbar = ttk.Frame(self.main_frame)
-        navbar.pack(fill=tk.X)
+        navbar.pack(fill=tk.X, pady=5)
 
-        # 导航按钮
-        self.aes_btn = ttk.Button(navbar, text="AES 加密", command=lambda: self.show_tab("aes"))
+        self.aes_btn = ttk.Button(navbar, text="AES", command=lambda: self.show_tab("aes"))
         self.aes_btn.pack(side=tk.LEFT, padx=5, pady=5)
 
-        self.rsa_btn = ttk.Button(navbar, text="RSA 加密", command=lambda: self.show_tab("rsa"))
+        self.rsa_btn = ttk.Button(navbar, text="RSA", command=lambda: self.show_tab("rsa"))
         self.rsa_btn.pack(side=tk.LEFT, padx=5, pady=5)
 
         self.hybrid_btn = ttk.Button(navbar, text="混合加密", command=lambda: self.show_tab("hybrid"))
@@ -88,6 +91,9 @@ class EncryptionToolApp:
 
         self.hash_btn = ttk.Button(navbar, text="哈希", command=lambda: self.show_tab("hash"))
         self.hash_btn.pack(side=tk.LEFT, padx=5, pady=5)
+
+        self.instructions_btn = ttk.Button(navbar, text="操作说明", command=self.show_welcome_popup)
+        self.instructions_btn.pack(side=tk.LEFT, padx=5, pady=5)
 
         # 分隔线
         ttk.Separator(self.main_frame, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=5)
@@ -501,7 +507,7 @@ class EncryptionToolApp:
 
     def create_hash_tab(self):
         """创建哈希标签页"""
-        self.hash_frame = ttk.LabelFrame(self.content_frame, text="SHA-256 哈希", padding="10")
+        self.hash_frame = ttk.LabelFrame(self.content_frame, text="SHA-256 哈希")
 
         # 配置 hash_frame 的 grid 布局，用于管理顶部内容区和底部暴力破解区
         self.hash_frame.grid_rowconfigure(0, weight=1) # 顶部内容行垂直扩展
@@ -512,13 +518,18 @@ class EncryptionToolApp:
         hash_top_content_frame = ttk.Frame(self.hash_frame)
         hash_top_content_frame.grid(row=0, column=0, sticky=tk.NSEW) # 填充所有方向
 
+        # 配置 hash_top_content_frame 的 grid 布局，容纳左右两个区域
+        hash_top_content_frame.grid_columnconfigure(0, weight=1) # 左侧区域水平扩展
+        hash_top_content_frame.grid_columnconfigure(1, weight=1) # 右侧区域水平扩展
+        hash_top_content_frame.grid_rowconfigure(0, weight=1) # 确保行可以垂直扩展
+
         # 左侧：输入区域
         left_frame = ttk.Frame(hash_top_content_frame)
-        left_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=5, pady=5)
+        left_frame.grid(row=0, column=0, sticky=tk.NSEW, padx=5, pady=5)
 
         # 输入文本
         ttk.Label(left_frame, text="输入文本:").pack(anchor=tk.W)
-        self.hash_input_text = scrolledtext.ScrolledText(left_frame, width=40, height=15)
+        self.hash_input_text = scrolledtext.ScrolledText(left_frame, height=15)
         self.hash_input_text.pack(fill=tk.BOTH, expand=True, pady=5)
 
         # 操作按钮
@@ -530,34 +541,36 @@ class EncryptionToolApp:
 
         # 右侧：结果输出区域
         right_frame = ttk.Frame(hash_top_content_frame)
-        right_frame.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True, padx=5, pady=5)
+        right_frame.grid(row=0, column=1, sticky=tk.NSEW, padx=5, pady=5)
 
         ttk.Label(right_frame, text="哈希结果:").pack(anchor=tk.W)
-        self.hash_output_text = scrolledtext.ScrolledText(right_frame, width=40, height=15)
+        self.hash_output_text = scrolledtext.ScrolledText(right_frame, height=15)
         self.hash_output_text.pack(fill=tk.BOTH, expand=True, pady=5)
 
         # 暴力破解区域 (现在直接grid到self.hash_frame)
-        brute_force_frame = ttk.LabelFrame(self.hash_frame, text="SHA-256 暴力破解 (仅限短字符串)", padding="10")
+        brute_force_frame = ttk.LabelFrame(self.hash_frame, text="SHA-256 暴力破解 (仅限短字符串)")
         brute_force_frame.grid(row=1, column=0, sticky=tk.EW, pady=5) # 水平填充
 
         # 使用 grid 布局来更精确地控制内部组件
         brute_force_frame.grid_columnconfigure(0, weight=1) # 确保第一列（内容列）可以扩展
 
         # 目标哈希值
-        ttk.Label(brute_force_frame, text="目标哈希值:").grid(row=0, column=0, sticky=tk.W, padx=5, pady=5)
-        self.hash_target_hash_entry = ttk.Entry(brute_force_frame, width=60)
-        self.hash_target_hash_entry.grid(row=1, column=0, sticky=tk.EW, padx=5, pady=5)
+        ttk.Label(brute_force_frame, text="目标哈希值:").grid(row=0, column=0, sticky=tk.W, pady=5)
+        self.hash_target_hash_entry = ttk.Entry(brute_force_frame)
+        self.hash_target_hash_entry.grid(row=1, column=0, sticky=tk.EW, pady=5)
 
         # 暴力破解按钮框架
         brute_force_btn_frame = ttk.Frame(brute_force_frame)
-        brute_force_btn_frame.grid(row=2, column=0, sticky=tk.W, padx=5, pady=5)
+        brute_force_btn_frame.grid(row=2, column=0, sticky=tk.EW, pady=5)
 
         ttk.Button(brute_force_btn_frame, text="暴力破解", command=self.brute_force_hash).pack(side=tk.LEFT, padx=5)
         self.pause_brute_force_btn = ttk.Button(brute_force_btn_frame, text="暂停", command=self.toggle_brute_force_pause, state=tk.DISABLED)
         self.pause_brute_force_btn.pack(side=tk.LEFT, padx=5)
 
         # 警告信息放置在单独的行，确保完整显示
-        ttk.Label(brute_force_frame, text="警告: 暴力破解仅对极短（如5字符以内）的字符串有效，耗时可能很长。", foreground="red", wraplength=1000).grid(row=3, column=0, sticky=tk.EW, padx=5, pady=5)
+        ttk.Label(brute_force_frame, 
+                  text="警告: 暴力破解仅对极短（如5字符以内）的字符串有效。\n耗时可能很长，请耐心等待。", 
+                  foreground="red").grid(row=3, column=0, sticky=tk.EW, pady=5)
 
     def hash_data(self):
         """计算输入文本的 SHA-256 哈希值"""
@@ -722,6 +735,7 @@ class EncryptionToolApp:
         self.rsa_frame.pack_forget()
         self.hybrid_frame.pack_forget()
         self.hash_frame.pack_forget()
+        # self.flowchart_frame.pack_forget()
         
         # 显示选中的标签页
         if tab_name == "aes":
@@ -736,3 +750,90 @@ class EncryptionToolApp:
         elif tab_name == "hash":
             self.hash_frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
             self.status_var.set("SHA-256 哈希")
+        # elif tab_name == "flowchart":
+        #     self.flowchart_frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+        #     self.status_var.set("加密流程图")
+
+    def show_welcome_popup(self):
+        """显示欢迎弹窗"""
+        popup = tk.Toplevel(self.root)
+        
+        # 立即隐藏弹窗并暂时移除窗口装饰，避免闪烁
+        popup.withdraw()
+        popup.overrideredirect(True) 
+        
+        # 设置最小尺寸
+        popup.minsize(800, 600) 
+        
+        # 创建内容框架
+        content_frame = ttk.Frame(popup, padding="20")
+        content_frame.pack(fill=tk.BOTH, expand=True)
+        
+        # 添加标题、说明文本和关闭按钮（内容）
+        title_label = ttk.Label(content_frame, text="欢迎使用加密工具！", font=("Arial", 16, "bold"))
+        title_label.pack(pady=(0, 20))
+        
+        instructions_text = """
+欢迎使用加密工具！本工具提供了AES、RSA、混合加密以及SHA-256哈希功能。
+
+**AES 加密/解密:**
+1. 输入明文或密文。
+2. 输入或生成密钥。密钥长度必须为16、24或32字节（Base64编码）。
+3. 点击"加密"或"解密"按钮。
+
+**RSA 加密/解密:**
+1. 输入明文或密文。
+2. 输入或生成公钥/私钥。私钥用于解密，公钥用于加密。
+3. 点击"加密"或"解密"按钮。
+
+**混合加密/解密:**
+1. 输入明文或密文。
+2. 混合加密结合了AES和RSA的优点。加密时，会生成一个随机AES密钥，用RSA公钥加密该AES密钥，然后用AES密钥加密明文。解密时，用RSA私钥解密AES密钥，再用AES密钥解密密文。
+3. 点击"加密"或"解密"按钮。
+
+**哈希 (SHA-256):**
+1. 输入文本，点击"计算哈希"即可获得其SHA-256哈希值。哈希是单向的，无法解密。
+2. "暴力破解"功能可尝试破解**极短**（如5字符以内）的哈希值。点击"暴力破解"，程序将尝试所有可能的组合来匹配目标哈希值。
+3. 暴力破解可能非常耗时，可以点击"暂停"按钮暂停，点击"继续"按钮恢复。
+
+请注意：
+- 所有密钥和IV都以Base64字符串形式显示和输入。
+- 暴力破解功能仅作为演示，不适用于实际安全场景。
+        """
+        instructions_label = scrolledtext.ScrolledText(content_frame, wrap=tk.WORD, font=("Arial", 10), padx=10, pady=10)
+        instructions_label.insert(tk.END, instructions_text)
+        instructions_label.config(state=tk.DISABLED)  # 使文本框只读
+        instructions_label.pack(fill=tk.BOTH, expand=True)
+        
+        close_button = ttk.Button(content_frame, text="我知道了", command=popup.destroy)
+        close_button.pack(pady=10)
+
+        # 强制更新所有挂起的几何管理任务，获取准确尺寸
+        popup.update_idletasks()
+
+        # 获取屏幕尺寸
+        screen_width = popup.winfo_screenwidth()
+        screen_height = popup.winfo_screenheight()
+
+        # 获取弹窗的实际宽度和高度
+        width = popup.winfo_width()
+        height = popup.winfo_height()
+
+        # 计算弹窗居中位置
+        x = (screen_width // 2) - (width // 2)
+        y = (screen_height // 2) - (height // 2)
+
+        # 调试信息
+        print(f"Screen size: {screen_width}x{screen_height}")
+        print(f"Popup size (final): {width}x{height}")
+        print(f"Calculated position (final): {x},{y}")
+        
+        # 设置弹窗最终位置和尺寸
+        popup.geometry(f'{width}x{height}+{x}+{y}')
+        
+        # 恢复窗口装饰、设置标题、模态，并显示
+        popup.overrideredirect(False) 
+        popup.title("欢迎使用加密工具") 
+        popup.transient(self.root) 
+        popup.grab_set() 
+        popup.deiconify() 
